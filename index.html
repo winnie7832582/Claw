@@ -1,0 +1,1474 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>街機夾娃娃機 3D - Claw Machine Arcade</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Cannon.js CDN (物理引擎) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        
+        body {
+            font-family: 'Noto Sans TC', -apple-system, sans-serif;
+            touch-action: manipulation;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #canvas-container { touch-action: none; }
+        .arcade-font {
+            font-family: 'Chakra Petch', sans-serif;
+        }
+
+        /* 霓虹邊框發光 */
+        .neon-border {
+            box-shadow: 0 0 15px rgba(244, 63, 94, 0.4), inset 0 0 15px rgba(244, 63, 94, 0.2);
+        }
+
+        .neon-blue {
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.4), inset 0 0 15px rgba(56, 189, 248, 0.2);
+        }
+
+        /* 街機搖桿與按鈕自訂質感 */
+        .arcade-btn {
+            box-shadow: 0 5px 0 rgba(0, 0, 0, 0.45), 0 8px 15px rgba(0, 0, 0, 0.3);
+            transition: transform 0.08s ease, box-shadow 0.08s ease;
+            touch-action: none;
+        }
+        .arcade-btn:active, .arcade-btn.pressed {
+            transform: translateY(4px);
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45), 0 3px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        /* 隱藏滾動條 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 h-[100dvh] w-screen overflow-hidden flex flex-col md:flex-row">
+
+    <!-- 左側 / 上方：主要 3D 遊戲櫥窗區域 -->
+    <div class="relative flex-1 min-h-0 bg-neutral-900 flex items-center justify-center overflow-hidden">
+        
+        <!-- 3D Canvas 容器 -->
+        <div id="canvas-container" class="w-full h-full cursor-grab active:cursor-grabbing"></div>
+
+        <!-- 機台頂部狀態 HUD -->
+        <div class="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none z-10">
+            <!-- 機台 Logo 與代幣 (點擊代幣框也可直接投幣) -->
+            <div class="flex items-center space-x-2 pointer-events-auto">
+                <div class="bg-rose-600/90 text-white font-black px-2.5 py-1 rounded-xl shadow-lg border border-rose-400 flex items-center gap-1.5 backdrop-blur-sm">
+                    <span class="text-sm">✨</span>
+                    <span class="tracking-wider text-xs sm:text-sm md:text-base">LUCKY CRANE</span>
+                </div>
+                <button id="hud-coin-btn" class="bg-black/75 hover:bg-slate-800 active:scale-95 transition backdrop-blur-md px-3 py-1 rounded-xl border border-amber-500/60 flex items-center gap-1.5 shadow-lg cursor-pointer" title="代幣有限，用完就結束！">
+                    <span class="text-sm">🪙</span>
+                    <span class="text-xs text-slate-300 font-bold">代幣:</span>
+                    <span id="coin-count" class="arcade-font text-yellow-400 font-bold text-base">10</span>
+                    
+                </button>
+            </div>
+
+            <!-- 分數與抓獲數 -->
+            <div class="flex items-center space-x-1.5 pointer-events-auto">
+                <div class="bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-xl border border-slate-700/80 flex items-center gap-1.5">
+                    <span class="text-sm">🏆</span>
+                    <span class="text-xs text-slate-300 font-bold hidden sm:inline">獲獎:</span>
+                    <span id="prize-count" class="arcade-font text-emerald-400 font-bold text-base">0</span>
+                </div>
+                <!-- 切換相機視角按鈕 -->
+                <button id="btn-camera" class="bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-slate-200 px-2.5 py-1.5 rounded-xl border border-slate-600/70 transition shadow text-xs font-bold flex items-center gap-1" title="切換視角">
+                    <span>🎥 視角</span>
+                </button>
+                <button id="btn-mute" class="bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-slate-200 px-2.5 py-1.5 rounded-xl border border-slate-600/70 transition shadow text-xs font-bold" title="音效開關">🔊</button>
+                <!-- 重新排列景品 -->
+                <button id="btn-reset-prizes" class="bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-slate-200 px-2.5 py-1.5 rounded-xl border border-slate-600/70 transition shadow text-xs font-bold flex items-center gap-1" title="重新補貨">
+                    <span>🔄 補貨 -2🪙</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 底部對位鎖定提示與視角提示 -->
+        <div class="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none z-10">
+            <div class="bg-black/60 text-slate-300 text-[11px] px-2.5 py-1 rounded-lg backdrop-blur-sm border border-slate-800 hidden sm:block">
+                <span>🖱️ 拖曳畫面旋轉視角 | 底部光圈變色代表對準娃娃</span>
+            </div>
+            <div id="target-indicator" class="bg-black/75 text-cyan-300 text-xs font-bold px-3 py-1 rounded-full backdrop-blur-md border border-cyan-500/40 flex items-center gap-1.5 shadow-lg ml-auto">
+                <span id="target-dot" class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+                <span id="target-text">移動爪子對準目標</span>
+            </div>
+        </div>
+
+        <!-- 關卡 / 目標 / 分數 / 限時條 -->
+        <div class="absolute top-11 left-2.5 z-10 pointer-events-none flex flex-col gap-1 w-48">
+            <div class="bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-xl border border-slate-700/80 text-[11px] font-bold flex items-center justify-between gap-2">
+                <span id="stage-text" class="text-sky-300">第1關</span>
+                <span id="goal-text" class="text-emerald-300">目標 0/3</span>
+                <span id="score-text" class="arcade-font text-yellow-300">0</span>
+            </div>
+            <div class="h-1.5 bg-slate-800/80 rounded-full overflow-hidden"><div id="timer-bar" class="h-full bg-cyan-400" style="width:100%"></div></div>
+        </div>
+
+        <!-- 機台訊息廣播框 (Toast 通知) -->
+        <div id="toast" class="absolute top-24 transition-all duration-300 transform -translate-y-12 opacity-0 pointer-events-none bg-indigo-600/95 text-white font-bold text-xs sm:text-sm px-4 py-2 rounded-2xl shadow-2xl border border-indigo-400 flex items-center gap-2 z-30">
+            <span id="toast-icon">💡</span>
+            <span id="toast-msg">歡迎光臨！請移動爪子或投幣開始！</span>
+        </div>
+
+        <!-- 勝利特效覆蓋層 -->
+        <div id="win-overlay" class="absolute inset-0 bg-emerald-950/75 backdrop-blur-sm z-40 flex flex-col items-center justify-center opacity-0 pointer-events-none transition-all duration-300">
+            <div class="relative bg-gradient-to-b from-slate-900 to-neutral-900 p-6 md:p-8 rounded-3xl border-2 border-yellow-400 shadow-[0_0_50px_rgba(234,179,8,0.4)] text-center max-w-xs md:max-w-sm mx-4">
+                <div class="w-16 h-16 bg-yellow-400/20 text-yellow-300 rounded-full flex items-center justify-center mx-auto mb-3 animate-bounce border border-yellow-400 text-3xl">
+                    🎁
+                </div>
+                <h3 id="win-title" class="text-2xl font-black text-yellow-300 tracking-wide mb-1">恭喜抓中！</h3>
+                <p id="win-item-name" class="text-slate-200 font-bold text-lg mb-2">幸運粉紅熊熊</p>
+                <p id="win-sub" class="text-xs text-slate-400 mb-5">已成功送入您的收藏背包中！</p>
+                <button id="btn-win-continue" class="w-full py-2.5 bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black rounded-xl hover:from-amber-400 hover:to-yellow-300 transition shadow-lg cursor-pointer">
+                    太棒了！繼續挑戰
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右側 / 下方：街機操控面板 (Arcade Control Panel) -->
+    <div class="w-full md:w-96 lg:w-[400px] bg-slate-900/95 border-t md:border-t-0 md:border-l border-slate-800 p-2.5 sm:p-4 md:p-5 flex flex-col justify-between shrink-0 shadow-2xl z-20">
+        
+        <!-- 操作模式切換與保夾能量條 -->
+        <div>
+            <!-- 保夾強爪能量條 -->
+            <div class="bg-slate-950/60 px-3 py-1.5 rounded-xl border border-slate-800/90 flex items-center justify-between gap-2 mb-1">
+                <span class="text-[11px] font-bold text-amber-300 shrink-0">⚡ 強爪保夾能量:</span>
+                <div class="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div id="pity-bar" class="h-full bg-gradient-to-r from-amber-500 to-rose-500 transition-all duration-300" style="width: 100%"></div>
+                </div>
+                <span id="pity-text" class="text-[11px] font-black text-emerald-400 shrink-0">MAX 強力抓握!</span>
+            </div>
+        </div>
+
+        <!-- 操控區域：搖桿自由模式視圖 -->
+        <div id="controls-free" class="flex-1 flex flex-col justify-center my-1">
+            <div class="text-center mb-1 hidden sm:block">
+                <span class="text-[11px] text-slate-400">可用鍵盤 <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-amber-300 font-mono">WASD</kbd> / 方向鍵移動，<kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-emerald-300 font-mono">空白鍵</kbd> 下爪</span>
+            </div>
+
+            <!-- 虛擬方向鍵盤 (十字鍵) -->
+            <div class="flex flex-col items-center justify-center select-none">
+                <button id="dpad-up" type="button" class="w-14 h-10 sm:h-11 bg-slate-800 hover:bg-slate-700 text-white rounded-t-xl border border-slate-600 flex items-center justify-center active:bg-indigo-600 shadow font-bold text-lg cursor-pointer touch-none">
+                    ▲
+                </button>
+                <div class="flex gap-1.5 my-0.5">
+                    <button id="dpad-left" type="button" class="w-14 h-10 sm:h-11 bg-slate-800 hover:bg-slate-700 text-white rounded-l-xl border border-slate-600 flex items-center justify-center active:bg-indigo-600 shadow font-bold text-lg cursor-pointer touch-none">
+                        ◀
+                    </button>
+                    <div class="w-12 h-10 sm:h-11 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-center">
+                        <div class="w-3.5 h-3.5 rounded-full bg-indigo-500 animate-pulse"></div>
+                    </div>
+                    <button id="dpad-right" type="button" class="w-14 h-10 sm:h-11 bg-slate-800 hover:bg-slate-700 text-white rounded-r-xl border border-slate-600 flex items-center justify-center active:bg-indigo-600 shadow font-bold text-lg cursor-pointer touch-none">
+                        ▶
+                    </button>
+                </div>
+                <button id="dpad-down" type="button" class="w-14 h-10 sm:h-11 bg-slate-800 hover:bg-slate-700 text-white rounded-b-xl border border-slate-600 flex items-center justify-center active:bg-indigo-600 shadow font-bold text-lg cursor-pointer touch-none">
+                    ▼
+                </button>
+            </div>
+        </div>
+
+        <!-- 下方主要動作區：下爪按鈕與投幣按鈕 -->
+        <div class="pt-2 border-t border-slate-800">
+            <!-- 爪子下抓按鍵 -->
+            <button id="btn-drop" type="button" class="arcade-btn w-full py-2.5 sm:py-3.5 mb-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 active:from-emerald-600 text-slate-950 font-black text-base sm:text-lg rounded-2xl border-2 border-emerald-300 flex items-center justify-center gap-2 shadow-lg tracking-wider cursor-pointer">
+                <span class="text-xl">🎯</span>
+                <span>立即下爪夾取 (DROP CLAW)</span>
+            </button>
+
+            <!-- 投幣與背包區 -->
+            <div class="flex items-center gap-2">
+                <button id="btn-insert-coin" type="button" class="arcade-btn flex-1 py-2 sm:py-2.5 bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-black text-xs sm:text-sm rounded-xl border border-yellow-200 flex items-center justify-center gap-1.5 cursor-pointer">
+                    <span class="text-base">🏁</span>
+                    <span>重新開局</span>
+                </button>
+                <button id="btn-inventory" type="button" class="px-3 py-2 sm:py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold cursor-pointer" title="查看戰利品背包">
+                    <span>🎒 背包</span>
+                    <span id="inv-badge" class="bg-indigo-600 text-white text-[10px] px-1.5 py-0.2 rounded-full">0</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 戰利品背包彈窗 (Modal) -->
+    <div id="inventory-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-200">
+        <div class="bg-slate-900 border border-slate-700 w-full max-w-md rounded-2xl p-5 shadow-2xl flex flex-col max-h-[80vh]">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div class="flex items-center gap-2">
+                    <span class="text-lg">🎁</span>
+                    <h3 class="font-bold text-base text-white">戰利品背包 &amp; 圖鑑</h3>
+                </div>
+                <button id="btn-close-inventory" class="text-slate-400 hover:text-white p-1 font-bold text-lg cursor-pointer">
+                    ✕
+                </button>
+            </div>
+            
+            <p class="text-[11px] text-amber-300/90 pt-2">💡 戰利品可兌換代幣續命；每種首次抓到 +2 代幣，圖鑑集滿再 +15！</p>
+            <div id="inventory-list" class="flex-1 overflow-y-auto py-3 space-y-2 no-scrollbar">
+                <div class="text-center py-10 text-slate-500 text-sm">
+                    目前還沒有抓到任何娃娃喔！快試試手氣吧！
+                </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-800 text-right">
+                <button id="btn-close-inventory-2" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold rounded-xl transition cursor-pointer">
+                    返回機台
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 遊戲主要邏輯 (Three.js + Cannon.js + Web Audio) -->
+    <script>
+        /* ============================================================
+           1. 音效引擎 (Web Audio API Synthesizer)
+           ============================================================ */
+        class SoundFX {
+            constructor() {
+                this.ctx = null;
+                this.muted = false;
+                this.lastMotor = 0;
+            }
+
+            init() {
+                try {
+                    if (!this.ctx) {
+                        const AudioContext = window.AudioContext || window.webkitAudioContext;
+                        if (AudioContext) this.ctx = new AudioContext();
+                    }
+                    if (this.ctx && this.ctx.state === 'suspended') {
+                        this.ctx.resume();
+                    }
+                } catch (e) {
+                    // 忽略音訊權限錯誤，避免阻斷遊戲操作
+                }
+            }
+
+            coin() {
+                this.init();
+                if (!this.ctx || this.muted) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(987.77, now);
+                osc.frequency.setValueAtTime(1318.51, now + 0.08);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.35);
+            }
+
+            motor() {
+                const t = performance.now();
+                if (t - this.lastMotor < 90) return;
+                this.lastMotor = t;
+                this.init();
+                if (!this.ctx || this.muted) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(135, now);
+                osc.frequency.linearRampToValueAtTime(155, now + 0.06);
+                gain.gain.setValueAtTime(0.03, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.08);
+            }
+
+            grab() {
+                this.init();
+                if (!this.ctx || this.muted) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(320, now);
+                osc.frequency.exponentialRampToValueAtTime(160, now + 0.18);
+                gain.gain.setValueAtTime(0.12, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.18);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.19);
+            }
+
+            win() {
+                this.init();
+                if (!this.ctx || this.muted) return;
+                const notes = [523.25, 659.25, 783.99, 1046.50];
+                notes.forEach((freq, idx) => {
+                    const now = this.ctx.currentTime + idx * 0.11;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(freq, now);
+                    gain.gain.setValueAtTime(0.25, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.3);
+                });
+            }
+        }
+
+        const sfx = new SoundFX();
+
+        /* ============================================================
+           2. 遊戲狀態與常數設定
+           ============================================================ */
+        const MACHINE_CONFIG = {
+            width: 7.0,       // 機台內部寬度 (X)
+            depth: 7.0,       // 機台內部深度 (Z)
+            height: 9.0,      // 機台內部高度 (Y)
+            chuteX: -2.2,     // 出貨口 X 位置 (左前角落)
+            chuteZ: 2.2,      // 出貨口 Z 位置
+            chuteRadius: 1.35,// 出貨口判定半徑
+            moveSpeed: 4.0,   // 天車移動速度
+            clawMinY: 1.05,   // 下抓最低高度 (調低以確保能包覆地面上的娃娃)
+            clawMaxY: 7.2     // 天車常態高度
+        };
+
+        const STATE = {
+            coins: 10,
+            prizesWon: 0,
+            pityPower: 0,    // 預設滿保夾能量，確保玩家容易夾中
+            inventory: [],
+            currentMode: 'free', // 'free' or 'arcade'
+            arcadeStep: 1,       // 1: 移動X, 2: 移動Z
+            clawStatus: 'IDLE',  // 'IDLE', 'ARCADE_STEP1', 'ARCADE_STEP1_DONE', 'ARCADE_STEP2', 'DESCENDING', 'CLOSING', 'ASCENDING', 'RETURNING', 'OPENING'
+            grabbedPrize: null,  // 當前被爪子抓牢的娃娃
+            willSlipMidway: false,
+            keys: { up: false, down: false, left: false, right: false }
+        };
+
+        /* ============================================================
+           3. Three.js 與 Cannon.js 物理世界初始化
+           ============================================================ */
+        const SAVE_KEY = 'clawMachineSave.v1';
+        let lastLockKey = null;
+        function saveGame() {
+            try { localStorage.setItem(SAVE_KEY, JSON.stringify({ coins: STATE.coins, prizesWon: STATE.prizesWon, inventory: STATE.inventory.slice(-100), level: STATE.level, score: STATE.score, best: STATE.best, caught: STATE.stageCaught, dex: STATE.dex })); } catch (e) {}
+        }
+        function loadGame() {
+            try {
+                const d = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+                if (!d) return;
+                STATE.best = d.best | 0;
+                STATE.dex = d.dex || {};
+                STATE.prizesWon = d.prizesWon | 0;
+                STATE.inventory = Array.isArray(d.inventory) ? d.inventory : [];
+                if (d.coins > 0) {
+                    STATE.coins = d.coins; STATE.level = Math.max(1, d.level | 0); STATE.score = d.score | 0; STATE.savedCaught = d.caught | 0;
+                }
+            } catch (e) {}
+        }
+        Object.assign(STATE, { level: 1, score: 0, best: 0, goal: 3, stageCaught: 0, savedCaught: 0, turnLimit: 30, turnTime: 30, gameOver: false, needNewStage: false, slipY: 0, slipReturn: false, returnT: 0, deadT: 0, dex: {} });
+        function setGoal() {
+            STATE.goal = Math.min(7, 2 + STATE.level);
+            STATE.stageCaught = 0;
+            STATE.turnLimit = Math.max(12, 30 - 3 * (STATE.level - 1));
+            STATE.turnTime = STATE.turnLimit;
+        }
+        function updateStageUI() {
+            document.querySelector('#stage-text').textContent = `第${STATE.level}關`;
+            document.querySelector('#goal-text').textContent = `目標 ${STATE.stageCaught}/${STATE.goal}`;
+            document.querySelector('#score-text').textContent = STATE.score;
+        }
+        function showWinOverlay(title, sub, btn) {
+            document.getElementById('win-title').textContent = title;
+            document.getElementById('win-sub').textContent = sub;
+            document.getElementById('btn-win-continue').textContent = btn;
+            const o = document.getElementById('win-overlay');
+            o.classList.remove('opacity-0', 'pointer-events-none');
+            o.classList.add('opacity-100');
+        }
+        function afterWin(info) {
+            STATE.score += info.points;
+            STATE.best = Math.max(STATE.best, STATE.score);
+            STATE.stageCaught++;
+            let sub = '已成功送入您的收藏背包中！', title = '恭喜抓中！';
+            if (info.legend) { STATE.coins += 3; sub = '傳說景品！額外獲得 3 枚代幣'; }
+            if (!STATE.dex[info.name]) {
+                STATE.dex[info.name] = 1; STATE.coins += 2; sub += '｜新圖鑑解鎖 +2 代幣';
+                if (PRIZE_TYPES.every(t => STATE.dex[t.name])) { STATE.coins += 15; sub += '｜圖鑑集滿！再 +15 代幣'; }
+            }
+            if (STATE.stageCaught >= STATE.goal) {
+                const reward = 3 + STATE.level;
+                STATE.coins += reward;
+                title = `第${STATE.level}關通關！`;
+                STATE.level++;
+                setGoal();
+                STATE.needNewStage = true;
+                sub = `獎勵 +${reward} 代幣｜第${STATE.level}關：目標 ${STATE.goal} 隻、每爪限時 ${STATE.turnLimit} 秒、娃娃更滑`;
+            }
+            document.getElementById('win-title').textContent = title;
+            document.getElementById('win-sub').textContent = sub;
+            refreshHUD(); updateStageUI(); saveGame();
+        }
+        function gameOver() {
+            STATE.gameOver = true;
+            document.getElementById('win-item-name').textContent = `最終分數 ${STATE.score}｜第${STATE.level}關`;
+            showWinOverlay('遊戲結束', `代幣用完了！個人最高分：${STATE.best}`, '再挑戰一次');
+            saveGame();
+        }
+        function restartGame() {
+            Object.assign(STATE, { level: 1, score: 0, coins: 10, pityPower: 0, gameOver: false, needNewStage: false, deadT: 0 });
+            setGoal(); spawnPrizes(); resetToIdle();
+            refreshHUD(); updateStageUI(); updatePityUI(); saveGame();
+            showToast('新遊戲開始！抓滿目標過關吧', '🎯');
+        }
+        function updateTurnTimer(dt) {
+            const st = STATE.clawStatus;
+            if (!STATE.gameOver && !overlayOpen() && STATE.coins > 0 && st === 'IDLE') {
+                STATE.turnTime -= dt;
+                if (STATE.turnTime <= 0) {
+                    STATE.turnTime = STATE.turnLimit;
+                    
+                    showToast('時間到！自動下爪', '⏰');
+                    triggerDropClaw();
+                }
+            }
+            const bar = document.getElementById('timer-bar');
+            const r = Math.max(0, STATE.turnTime / STATE.turnLimit);
+            bar.style.width = (r * 100) + '%';
+            bar.className = 'h-full ' + (r < 0.3 ? 'bg-rose-500' : 'bg-cyan-400');
+        }
+        function refreshHUD() {
+            document.querySelector('#coin-count').textContent = STATE.coins;
+            document.querySelector('#prize-count').textContent = STATE.prizesWon;
+            document.querySelector('#inv-badge').textContent = STATE.inventory.length;
+        }
+        function buzz(p) { try { navigator.vibrate && navigator.vibrate(p); } catch (e) {} }
+        function isBusy() { return ['DESCENDING', 'CLOSING', 'ASCENDING', 'RETURNING', 'OPENING'].includes(STATE.clawStatus); }
+        function overlayOpen() {
+            return !document.getElementById('win-overlay').classList.contains('pointer-events-none') ||
+                   !document.getElementById('inventory-modal').classList.contains('pointer-events-none');
+        }
+        function closeOverlays() {
+            document.getElementById('btn-win-continue').click();
+            document.getElementById('btn-close-inventory').click();
+        }
+        function disposePrize(p) {
+            scene.remove(p.mesh);
+            world.remove(p.body);
+            p.mesh.traverse(o => {
+                if (o.geometry) o.geometry.dispose();
+                if (o.material) o.material.dispose();
+            });
+        }
+
+        let scene, camera, renderer, world;
+        let clawGantryMesh, clawAnchorBody;
+        let laserRingMesh, laserLineMesh;
+        let prizes = [];
+        let cameraModeIndex = 0;
+
+        const container = document.getElementById('canvas-container');
+
+        function initGraphicsAndPhysics() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x131722);
+            scene.fog = new THREE.FogExp2(0x131722, 0.03);
+
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 100);
+            updateCameraPosition();
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            // Cannon.js 物理世界
+            world = new CANNON.World();
+            world.gravity.set(0, -9.82 * 1.4, 0);
+            world.broadphase = new CANNON.NaiveBroadphase();
+            world.solver.iterations = 10;
+            world.defaultContactMaterial.friction = 0.5;
+            world.defaultContactMaterial.restitution = 0.15;
+
+            setupLights();
+            buildMachineCabinet();
+            buildGantryAndClaw();
+            spawnPrizes();
+
+            new ResizeObserver(onWindowResize).observe(container);
+            setupOrbitInteraction();
+        }
+
+        function setupLights() {
+            const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambient);
+
+            const spotLight = new THREE.SpotLight(0xfff5ea, 1.8);
+            spotLight.position.set(0, 11, 0);
+            spotLight.angle = Math.PI / 2.8;
+            spotLight.penumbra = 0.5;
+            spotLight.castShadow = true;
+            spotLight.shadow.mapSize.width = 1024;
+            spotLight.shadow.mapSize.height = 1024;
+            scene.add(spotLight);
+
+            const pinkNeon = new THREE.PointLight(0xf43f5e, 1.2, 9);
+            pinkNeon.position.set(-3.2, 5, 0);
+            scene.add(pinkNeon);
+
+            const cyanNeon = new THREE.PointLight(0x06b6d4, 1.2, 9);
+            cyanNeon.position.set(3.2, 5, 0);
+            scene.add(cyanNeon);
+        }
+
+        function updateCameraPosition() {
+            if (cameraModeIndex === 0) {
+                camera.position.set(0, 8.2, 11.2);
+                camera.lookAt(0, 3.6, 0);
+            } else if (cameraModeIndex === 1) {
+                camera.position.set(0, 4.6, 10.6);
+                camera.lookAt(0, 3.5, 0);
+            } else {
+                camera.position.set(0, 12.8, 3.0);
+                camera.lookAt(0, 2.0, 0);
+            }
+        }
+
+        function buildMachineCabinet() {
+            const w = MACHINE_CONFIG.width;
+            const d = MACHINE_CONFIG.depth;
+            const h = MACHINE_CONFIG.height;
+
+            // 地板
+            const floorGeo = new THREE.PlaneGeometry(w, d);
+            const floorMat = new THREE.MeshStandardMaterial({
+                color: 0x1e293b,
+                roughness: 0.8,
+                metalness: 0.2
+            });
+            const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+            floorMesh.rotation.x = -Math.PI / 2;
+            floorMesh.position.y = 0;
+            floorMesh.receiveShadow = true;
+            scene.add(floorMesh);
+
+            const floorBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
+            floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+            world.addBody(floorBody);
+
+            // 出貨口黑洞與霓虹框
+            const chuteGroup = new THREE.Group();
+            const holeGeo = new THREE.CircleGeometry(1.05, 32);
+            const holeMat = new THREE.MeshBasicMaterial({ color: 0x05050a });
+            const holeMesh = new THREE.Mesh(holeGeo, holeMat);
+            holeMesh.rotation.x = -Math.PI / 2;
+            holeMesh.position.set(MACHINE_CONFIG.chuteX, 0.015, MACHINE_CONFIG.chuteZ);
+            chuteGroup.add(holeMesh);
+
+            const ringGeo = new THREE.RingGeometry(0.95, 1.25, 32);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0xf43f5e, side: THREE.DoubleSide });
+            const chuteRing = new THREE.Mesh(ringGeo, ringMat);
+            chuteRing.rotation.x = -Math.PI / 2;
+            chuteRing.position.set(MACHINE_CONFIG.chuteX, 0.025, MACHINE_CONFIG.chuteZ);
+            chuteGroup.add(chuteRing);
+
+            // 出貨口矮圍欄
+            const wallH = 0.85;
+            const borderMat = new THREE.MeshStandardMaterial({ color: 0xf43f5e, roughness: 0.3 });
+            const rightBorder = new THREE.Mesh(new THREE.BoxGeometry(0.1, wallH, 2.3), borderMat);
+            rightBorder.position.set(MACHINE_CONFIG.chuteX + 1.15, wallH / 2, MACHINE_CONFIG.chuteZ);
+            chuteGroup.add(rightBorder);
+
+            const backBorder = new THREE.Mesh(new THREE.BoxGeometry(2.3, wallH, 0.1), borderMat);
+            backBorder.position.set(MACHINE_CONFIG.chuteX, wallH / 2, MACHINE_CONFIG.chuteZ - 1.15);
+            chuteGroup.add(backBorder);
+            scene.add(chuteGroup);
+
+            addStaticPhysicsBox(0.1, wallH, 2.3, MACHINE_CONFIG.chuteX + 1.15, wallH / 2, MACHINE_CONFIG.chuteZ);
+            addStaticPhysicsBox(2.3, wallH, 0.1, MACHINE_CONFIG.chuteX, wallH / 2, MACHINE_CONFIG.chuteZ - 1.15);
+
+            // 四角柱
+            const cornerMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.2, metalness: 0.8 });
+            const postGeo = new THREE.BoxGeometry(0.22, h, 0.22);
+            [
+                [-w / 2, h / 2, -d / 2],
+                [w / 2, h / 2, -d / 2],
+                [-w / 2, h / 2, d / 2],
+                [w / 2, h / 2, d / 2]
+            ].forEach(([cx, cy, cz]) => {
+                const post = new THREE.Mesh(postGeo, cornerMat);
+                post.position.set(cx, cy, cz);
+                scene.add(post);
+            });
+
+            // 櫥窗 физика牆壁
+            addStaticPhysicsBox(w, h, 0.2, 0, h / 2, -d / 2);
+            addStaticPhysicsBox(w, h, 0.2, 0, h / 2, d / 2);
+            addStaticPhysicsBox(0.2, h, d, -w / 2, h / 2, 0);
+            addStaticPhysicsBox(0.2, h, d, w / 2, h / 2, 0);
+
+            // 天車滑軌
+            const railMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.9, roughness: 0.2 });
+            const railL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, d), railMat);
+            railL.rotation.x = Math.PI / 2;
+            railL.position.set(-w / 2 + 0.3, MACHINE_CONFIG.clawMaxY + 0.3, 0);
+            scene.add(railL);
+
+            const railR = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, d), railMat);
+            railR.rotation.x = Math.PI / 2;
+            railR.position.set(w / 2 - 0.3, MACHINE_CONFIG.clawMaxY + 0.3, 0);
+            scene.add(railR);
+        }
+
+        function addStaticPhysicsBox(sx, sy, sz, px, py, pz) {
+            const body = new CANNON.Body({ mass: 0 });
+            body.addShape(new CANNON.Box(new CANNON.Vec3(sx / 2, sy / 2, sz / 2)));
+            body.position.set(px, py, pz);
+            world.addBody(body);
+        }
+
+        /* ============================================================
+           4. 天車、三爪與雷射瞄準線建立
+           ============================================================ */
+        let clawVisualRoot;
+        let clawRopeMesh;
+        let fingerVisuals = [];
+        let hubLightMat;
+
+        function buildGantryAndClaw() {
+            clawVisualRoot = new THREE.Group();
+
+            // 橫樑天車
+            const gantryGeo = new THREE.BoxGeometry(0.9, 0.35, 0.9);
+            const gantryMat = new THREE.MeshStandardMaterial({ color: 0x3b82f6, roughness: 0.3, metalness: 0.6 });
+            clawGantryMesh = new THREE.Mesh(gantryGeo, gantryMat);
+            clawGantryMesh.position.set(0, MACHINE_CONFIG.clawMaxY, 0);
+            scene.add(clawGantryMesh);
+
+            // 鋼索
+            const ropeGeo = new THREE.CylinderGeometry(0.025, 0.025, 1);
+            const ropeMat = new THREE.MeshBasicMaterial({ color: 0xcbd5e1 });
+            clawRopeMesh = new THREE.Mesh(ropeGeo, ropeMat);
+            scene.add(clawRopeMesh);
+
+            // 爪子中心本體馬達
+            const hubGeo = new THREE.CylinderGeometry(0.32, 0.38, 0.45, 20);
+            const hubMat = new THREE.MeshStandardMaterial({ color: 0xe11d48, metalness: 0.7, roughness: 0.3 });
+            const clawHubMesh = new THREE.Mesh(hubGeo, hubMat);
+            clawVisualRoot.add(clawHubMesh);
+
+            // 爪頂指示燈
+            hubLightMat = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
+            const lightIndicator = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 16), hubLightMat);
+            lightIndicator.position.y = 0.26;
+            clawHubMesh.add(lightIndicator);
+
+            // 建立 3 隻機械爪臂
+            const fingerAngles = [0, (2 * Math.PI) / 3, (4 * Math.PI) / 3];
+            fingerVisuals = [];
+
+            fingerAngles.forEach((angle) => {
+                const fingerPivot = new THREE.Group();
+                fingerPivot.rotation.y = angle;
+
+                const armHolder = new THREE.Group();
+                armHolder.position.set(0, -0.1, 0.28);
+
+                const segMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.8, roughness: 0.2 });
+
+                // 上爪節
+                const upperMesh = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.65, 0.09), segMat);
+                upperMesh.position.set(0, -0.3, 0.12);
+                upperMesh.rotation.x = 0.38;
+                armHolder.add(upperMesh);
+
+                // 下彎鉤爪 (內勾)
+                const tipMesh = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 0.08), segMat);
+                tipMesh.position.set(0, -0.72, 0.12);
+                tipMesh.rotation.x = -0.65;
+                armHolder.add(tipMesh);
+
+                fingerPivot.add(armHolder);
+                clawVisualRoot.add(fingerPivot);
+                fingerVisuals.push(armHolder);
+            });
+
+            scene.add(clawVisualRoot);
+
+            // 底部雷射瞄準圈 (幫助玩家判斷 X/Z 落點)
+            const targetRingGeo = new THREE.RingGeometry(0.45, 0.6, 32);
+            const targetRingMat = new THREE.MeshBasicMaterial({
+                color: 0x22d3ee,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.85
+            });
+            laserRingMesh = new THREE.Mesh(targetRingGeo, targetRingMat);
+            laserRingMesh.rotation.x = -Math.PI / 2;
+            laserRingMesh.position.y = 0.03;
+            scene.add(laserRingMesh);
+
+            // 垂直雷射虛線光束
+            const laserBeamGeo = new THREE.CylinderGeometry(0.015, 0.015, 1, 8);
+            const laserBeamMat = new THREE.MeshBasicMaterial({
+                color: 0x22d3ee,
+                transparent: true,
+                opacity: 0.25
+            });
+            laserLineMesh = new THREE.Mesh(laserBeamGeo, laserBeamMat);
+            scene.add(laserLineMesh);
+
+            // 爪頭物理剛體 (Kinematic，穩定移動不亂晃)
+            clawAnchorBody = new CANNON.Body({
+                mass: 0,
+                type: CANNON.Body.KINEMATIC,
+                position: new CANNON.Vec3(0, MACHINE_CONFIG.clawMaxY - 0.5, 0)
+            });
+            clawAnchorBody.addShape(new CANNON.Sphere(0.32));
+            world.addBody(clawAnchorBody);
+        }
+
+        /* ============================================================
+           5. 娃娃 / 景品生成系統
+           ============================================================ */
+        const PRIZE_TYPES = [
+            { name: "草莓粉紅熊", color: 0xf43f5e, shape: "bear", points: 100, grip: 1.0, w: 3 },
+            { name: "薄荷綠波波熊", color: 0x10b981, shape: "bear", points: 120, grip: 0.95, w: 3 },
+            { name: "黃金驚喜禮盒", color: 0xf59e0b, shape: "box", points: 150, grip: 0.8, w: 2 },
+            { name: "霓虹電氣球", color: 0x06b6d4, shape: "ball", points: 90, grip: 0.65, w: 3 },
+            { name: "紫夜魔幻盒", color: 0x8b5cf6, shape: "box", points: 130, grip: 0.8, w: 2 },
+            { name: "蜜桃幸運兔", color: 0xec4899, shape: "bear", points: 160, grip: 0.85, w: 2 },
+            { name: "✨傳說金熊王", color: 0xfacc15, shape: "bear", points: 500, grip: 0.5, w: 0, scale: 1.5, mass: 1.8, legend: true }
+        ];
+        function pickPrizeType(i) {
+            if (i === 0) return PRIZE_TYPES.find(t => t.legend);
+            const pool = PRIZE_TYPES.filter(t => t.w > 0);
+            let r = Math.random() * pool.reduce((n, t) => n + t.w, 0);
+            for (const t of pool) { r -= t.w; if (r <= 0) return t; }
+            return pool[0];
+        }
+
+        function createPrizeMeshAndBody(type, x, y, z) {
+            const group = new THREE.Group();
+            let body;
+
+            if (type.shape === 'bear') {
+                const mat = new THREE.MeshStandardMaterial({ color: type.color, roughness: 0.6 });
+                const earMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 });
+
+                const bodyMesh = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 16), mat);
+                bodyMesh.castShadow = true;
+                group.add(bodyMesh);
+
+                const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 16), mat);
+                headMesh.position.y = 0.45;
+                headMesh.castShadow = true;
+                group.add(headMesh);
+
+                const earGeo = new THREE.SphereGeometry(0.12, 12, 12);
+                const earL = new THREE.Mesh(earGeo, earMat);
+                earL.position.set(-0.26, 0.72, 0.05);
+                const earR = earL.clone();
+                earR.position.set(0.26, 0.72, 0.05);
+                group.add(earL);
+                group.add(earR);
+
+                body = new CANNON.Body({
+                    mass: type.mass || 0.8,
+                    position: new CANNON.Vec3(x, y, z),
+                    linearDamping: 0.4,
+                    angularDamping: 0.5
+                });
+                body.addShape(new CANNON.Sphere(0.44 * (type.scale || 1)));
+            } 
+            else if (type.shape === 'box') {
+                const mat = new THREE.MeshStandardMaterial({ color: type.color, roughness: 0.25, metalness: 0.3 });
+                const boxMesh = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), mat);
+                boxMesh.castShadow = true;
+                group.add(boxMesh);
+
+                const ribMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+                const ribbon1 = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.14, 0.72), ribMat);
+                const ribbon2 = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.72, 0.72), ribMat);
+                group.add(ribbon1, ribbon2);
+
+                body = new CANNON.Body({
+                    mass: 0.85,
+                    position: new CANNON.Vec3(x, y, z),
+                    linearDamping: 0.4,
+                    angularDamping: 0.5
+                });
+                body.addShape(new CANNON.Box(new CANNON.Vec3(0.35, 0.35, 0.35)));
+            } 
+            else {
+                const mat = new THREE.MeshStandardMaterial({ color: type.color, roughness: 0.25, metalness: 0.4 });
+                const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(0.45, 20, 20), mat);
+                ballMesh.castShadow = true;
+                group.add(ballMesh);
+
+                const starBand = new THREE.Mesh(
+                    new THREE.TorusGeometry(0.45, 0.04, 12, 24),
+                    new THREE.MeshBasicMaterial({ color: 0xfef08a })
+                );
+                starBand.rotation.x = Math.PI / 2;
+                group.add(starBand);
+
+                body = new CANNON.Body({
+                    mass: 0.75,
+                    position: new CANNON.Vec3(x, y, z),
+                    linearDamping: 0.35,
+                    angularDamping: 0.45
+                });
+                body.addShape(new CANNON.Sphere(0.45));
+            }
+
+            group.scale.setScalar(type.scale || 1);
+            scene.add(group);
+            world.addBody(body);
+
+            return {
+                mesh: group,
+                body: body,
+                info: type,
+                id: Math.random().toString(36).substring(2, 9)
+            };
+        }
+
+        function spawnPrizes() {
+            STATE.grabbedPrize = null;
+            prizes.forEach(disposePrize);
+            prizes = [];
+
+            const prizeCount = 20;
+            for (let i = 0; i < prizeCount; i++) {
+                const type = pickPrizeType(i);
+                let px, pz;
+                do {
+                    px = (Math.random() - 0.5) * (MACHINE_CONFIG.width - 1.8);
+                    pz = (Math.random() - 0.5) * (MACHINE_CONFIG.depth - 1.8);
+                } while (Math.hypot(px - MACHINE_CONFIG.chuteX, pz - MACHINE_CONFIG.chuteZ) < 1.85);
+
+                const py = 0.6 + (i % 3) * 0.65;
+                const item = createPrizeMeshAndBody(type, px, py, pz);
+                prizes.push(item);
+            }
+        }
+
+        /* ============================================================
+           6. 夾子控制、雷射鎖定與抓舉狀態機
+           ============================================================ */
+        // 初始位置設在機台中央，方便玩家直接開抓
+        let clawTargetX = 0.0;
+        let clawTargetZ = 0.0;
+        let clawCurrentY = MACHINE_CONFIG.clawMaxY;
+        let clawAperture = 0.8; // 1.0: 張開, 0.0: 閉合
+        let stateTimer = 0;
+
+        // 尋找爪子正下方最近的娃娃
+        function findClosestPrizeUnderClaw() {
+            let bestPrize = null;
+            let minDist = Infinity;
+
+            for (const p of prizes) {
+                const dx = p.body.position.x - clawTargetX;
+                const dz = p.body.position.z - clawTargetZ;
+                const dist = Math.hypot(dx, dz);
+                if (dist < minDist) {
+                    minDist = dist;
+                    bestPrize = p;
+                }
+            }
+            return { prize: bestPrize, distance: minDist };
+        }
+
+        function updateClawLogic(deltaTime) {
+            const speed = MACHINE_CONFIG.moveSpeed * deltaTime;
+
+            // 檢查正下方是否對準娃娃並更新雷射準星顏色
+            const { prize: nearestPrize, distance: nearestDist } = findClosestPrizeUnderClaw();
+            const isLockedOn = nearestPrize && nearestDist < 0.78;
+
+            if (STATE.clawStatus === 'IDLE' || STATE.clawStatus.startsWith('ARCADE_STEP')) {
+                const colorHex = isLockedOn ? 0x10b981 : 0x22d3ee;
+                laserRingMesh.material.color.setHex(colorHex);
+                laserLineMesh.material.color.setHex(colorHex);
+                hubLightMat.color.setHex(colorHex);
+
+                const lockKey = isLockedOn ? nearestPrize.info.name : '';
+                if (lockKey !== lastLockKey) {
+                    lastLockKey = lockKey;
+                    const targetText = document.getElementById('target-text');
+                    const targetDot = document.getElementById('target-dot');
+                    if (isLockedOn) {
+                        targetText.textContent = `🎯 已瞄準：${lockKey}（可下爪！）`;
+                        targetText.className = 'text-emerald-300 font-bold';
+                        targetDot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-ping';
+                    } else {
+                        targetText.textContent = '移動爪子對準娃娃光圈';
+                        targetText.className = 'text-cyan-300 font-bold';
+                        targetDot.className = 'w-2 h-2 rounded-full bg-cyan-400 animate-ping';
+                    }
+                }
+            }
+
+            // 狀態 1：待機 / 自由移動
+            if (STATE.clawStatus === 'IDLE') {
+                let moved = false;
+                if (STATE.keys.left)  { clawTargetX -= speed; moved = true; }
+                if (STATE.keys.right) { clawTargetX += speed; moved = true; }
+                if (STATE.keys.up)    { clawTargetZ -= speed; moved = true; }
+                if (STATE.keys.down)  { clawTargetZ += speed; moved = true; }
+
+                if (moved && Math.random() < 0.25) sfx.motor();
+
+                const limitX = (MACHINE_CONFIG.width / 2) - 0.65;
+                const limitZ = (MACHINE_CONFIG.depth / 2) - 0.65;
+                clawTargetX = Math.max(-limitX, Math.min(limitX, clawTargetX));
+                clawTargetZ = Math.max(-limitZ, Math.min(limitZ, clawTargetZ));
+
+                clawAperture = 0.75;
+            }
+            // 狀態 3：下爪 (DESCENDING)
+            else if (STATE.clawStatus === 'DESCENDING') {
+                clawAperture = Math.min(1.0, clawAperture + deltaTime * 3.5); // 爪子完全張開
+                clawCurrentY -= speed * 1.15;
+
+                // 若碰到下方對準的娃娃頂部或到達最低點即合爪
+                let stopHeight = MACHINE_CONFIG.clawMinY;
+                if (nearestPrize && nearestDist < 0.85) {
+                    stopHeight = Math.max(MACHINE_CONFIG.clawMinY, nearestPrize.body.position.y + 0.55);
+                }
+
+                if (clawCurrentY <= stopHeight) {
+                    clawCurrentY = stopHeight;
+                    STATE.clawStatus = 'CLOSING';
+                    stateTimer = 0;
+                    sfx.grab();
+                    buzz(30);
+
+                    // 判定是否成功抓牢娃娃 (準度 x 材質抓力 x 關卡難度)
+                    STATE.grabbedPrize = null; STATE.slipY = 0; STATE.slipReturn = false;
+                    if (nearestPrize && nearestDist < 0.9) {
+                        const accuracy = 1 - nearestDist / 0.9;
+                        const grip = (nearestPrize.info.grip || 1) * Math.max(0.7, 1 - 0.04 * (STATE.level - 1));
+                        const forced = STATE.pityPower >= 100;
+                        const chance = forced ? 1 : grip * (0.25 + 0.75 * accuracy);
+                        if (Math.random() < chance) {
+                            STATE.grabbedPrize = nearestPrize;
+                            STATE.pityPower = 0;
+                            if (!forced) {
+                                if (Math.random() < Math.min(0.75, (1 - grip) * 0.8 + 0.12)) STATE.slipY = 2.2 + Math.random() * 4.2;
+                                else STATE.slipReturn = Math.random() < (1 - grip) * 0.5 + 0.08;
+                            }
+                        } else {
+                            STATE.pityPower = Math.min(100, STATE.pityPower + 25);
+                            const b = nearestPrize.body;
+                            b.applyImpulse(new CANNON.Vec3((Math.random() - 0.5) * 1.2, 1.4, (Math.random() - 0.5) * 1.2), b.position);
+                            showToast('爪子沒抓牢…差一點！', '😖');
+                        }
+                    } else {
+                        STATE.pityPower = Math.min(100, STATE.pityPower + 25);
+                    }
+                    updatePityUI();
+                }
+            }
+            // 狀態 4：合爪抓緊 (CLOSING)
+            else if (STATE.clawStatus === 'CLOSING') {
+                clawAperture = Math.max(0.05, clawAperture - deltaTime * 3.2);
+                stateTimer += deltaTime;
+
+                // 將抓中的娃娃溫柔吸附進爪心
+                if (STATE.grabbedPrize) {
+                    const pBody = STATE.grabbedPrize.body;
+                    pBody.velocity.set(0, 0, 0);
+                    pBody.angularVelocity.set(0, 0, 0);
+                    pBody.position.x += (clawTargetX - pBody.position.x) * 0.25;
+                    pBody.position.z += (clawTargetZ - pBody.position.z) * 0.25;
+                    pBody.position.y += ((clawCurrentY - 0.58) - pBody.position.y) * 0.25;
+                }
+
+                if (stateTimer > 0.65) {
+                    STATE.clawStatus = 'ASCENDING';
+                }
+            }
+            // 狀態 5：上升提拉 (ASCENDING)
+            else if (STATE.clawStatus === 'ASCENDING') {
+                clawCurrentY += speed * 0.95;
+
+                if (STATE.grabbedPrize) {
+                    const pBody = STATE.grabbedPrize.body;
+                    pBody.velocity.set(0, 0, 0);
+                    pBody.position.x = clawTargetX + Math.sin(performance.now() * 0.008) * 0.04;
+                    pBody.position.z = clawTargetZ + Math.cos(performance.now() * 0.008) * 0.04;
+                    pBody.position.y = clawCurrentY - 0.6;
+
+                    // 如果判定擦邊滑落，在上升到一半時鬆脫
+                    if (STATE.slipY && clawCurrentY > STATE.slipY) {
+                        STATE.grabbedPrize = null;
+                        STATE.slipY = 0;
+                        showToast('哎呀！抓到一半滑掉了！', '💨');
+                    }
+                }
+
+                if (clawCurrentY >= MACHINE_CONFIG.clawMaxY) {
+                    clawCurrentY = MACHINE_CONFIG.clawMaxY;
+                    // 若根本沒抓到東西，就不必大老遠回洞口，直接原地待機讓玩家繼續抓！
+                    if (!STATE.grabbedPrize) {
+                        showToast('差一點點！看準底部綠色光圈再下爪喔！', '💡');
+                        resetToIdle();
+                    } else {
+                        STATE.clawStatus = 'RETURNING';
+                        STATE.returnT = 0;
+                        showToast('抓到了！正在運送至出貨洞口...', '🎉');
+                    }
+                }
+            }
+            // 狀態 6：運送回左前出貨口 (RETURNING)
+            else if (STATE.clawStatus === 'RETURNING') {
+                const dx = MACHINE_CONFIG.chuteX - clawTargetX;
+                const dz = MACHINE_CONFIG.chuteZ - clawTargetZ;
+                const dist = Math.hypot(dx, dz);
+
+                if (dist > 0.08) {
+                    clawTargetX += (dx / dist) * speed * 0.95;
+                    clawTargetZ += (dz / dist) * speed * 0.95;
+                    STATE.returnT += deltaTime;
+                    if (STATE.grabbedPrize && STATE.slipReturn && STATE.returnT > 0.7) {
+                        STATE.grabbedPrize = null; STATE.slipReturn = false;
+                        showToast('運送途中掉落了！', '💨');
+                    }
+                    if (Math.random() < 0.2) sfx.motor();
+
+                    if (STATE.grabbedPrize) {
+                        const pBody = STATE.grabbedPrize.body;
+                        pBody.velocity.set(0, 0, 0);
+                        pBody.position.x = clawTargetX + Math.sin(performance.now() * 0.01) * 0.05;
+                        pBody.position.z = clawTargetZ + Math.cos(performance.now() * 0.01) * 0.05;
+                        pBody.position.y = clawCurrentY - 0.6;
+                    }
+                } else {
+                    clawTargetX = MACHINE_CONFIG.chuteX;
+                    clawTargetZ = MACHINE_CONFIG.chuteZ;
+                    STATE.clawStatus = 'OPENING';
+                    stateTimer = 0;
+                }
+            }
+            // 狀態 7：洞口張爪放物 (OPENING)
+            else if (STATE.clawStatus === 'OPENING') {
+                clawAperture = Math.min(1.0, clawAperture + deltaTime * 3.5);
+                stateTimer += deltaTime;
+
+                // 釋放抓著的娃娃讓它掉進洞口
+                if (STATE.grabbedPrize) {
+                    const wonPrize = STATE.grabbedPrize;
+                    STATE.grabbedPrize = null;
+                    wonPrize.body.velocity.set(0, -4, 0);
+                }
+
+                if (stateTimer > 1.0) {
+                    // 移回中央方便下一局操作
+                    clawTargetX = 0;
+                    clawTargetZ = 0;
+                    resetToIdle();
+                }
+            }
+
+            // 更新天車與爪頭位置
+            clawGantryMesh.position.x = clawTargetX;
+            clawGantryMesh.position.z = clawTargetZ;
+
+            clawAnchorBody.position.set(clawTargetX, clawCurrentY - 0.45, clawTargetZ);
+            clawVisualRoot.position.copy(clawAnchorBody.position);
+
+            // 更新懸掛鋼線
+            const ropeLen = Math.max(0.1, MACHINE_CONFIG.clawMaxY - clawAnchorBody.position.y);
+            clawRopeMesh.position.set(clawTargetX, clawAnchorBody.position.y + ropeLen / 2, clawTargetZ);
+            clawRopeMesh.scale.set(1, ropeLen, 1);
+
+            // 更新雷射準星與光束位置
+            laserRingMesh.position.x = clawTargetX;
+            laserRingMesh.position.z = clawTargetZ;
+            const beamHeight = Math.max(0.1, clawAnchorBody.position.y - 0.5);
+            laserLineMesh.position.set(clawTargetX, beamHeight / 2, clawTargetZ);
+            laserLineMesh.scale.set(1, beamHeight, 1);
+
+            // 更新三爪開合角度視覺
+            const openAngle = (clawAperture - 0.35) * 0.85; // 正值外張，負值內抓
+            fingerVisuals.forEach((armHolder) => {
+                armHolder.rotation.x = openAngle;
+            });
+
+            // 檢查出貨口掉落獲獎
+            checkChuteDrop();
+        }
+
+        function updatePityUI() {
+            const bar = document.getElementById('pity-bar');
+            const text = document.getElementById('pity-text');
+            bar.style.width = `${STATE.pityPower}%`;
+            if (STATE.pityPower >= 100) {
+                text.textContent = '必中！下一爪保證抓牢';
+                text.className = 'text-[11px] font-black text-emerald-400 shrink-0';
+            } else {
+                text.textContent = `${STATE.pityPower}% 蓄力中`;
+                text.className = 'text-[11px] font-bold text-amber-300 shrink-0';
+            }
+        }
+
+        function checkChuteDrop() {
+            for (let i = prizes.length - 1; i >= 0; i--) {
+                const p = prizes[i];
+                if (p === STATE.grabbedPrize) continue;
+
+                const pos = p.body.position;
+                const distToChute = Math.hypot(pos.x - MACHINE_CONFIG.chuteX, pos.z - MACHINE_CONFIG.chuteZ);
+                if (distToChute < MACHINE_CONFIG.chuteRadius && pos.y < 1.3) {
+                    triggerWin(p.info);
+                    disposePrize(p);
+                    prizes.splice(i, 1);
+                    break;
+                }
+            }
+        }
+
+        function triggerWin(prizeInfo) {
+            sfx.win();
+            buzz([60, 40, 120]);
+            STATE.prizesWon++;
+            STATE.inventory.push({ ...prizeInfo, date: new Date().toLocaleTimeString() });
+
+            document.getElementById('prize-count').textContent = STATE.prizesWon;
+            saveGame();
+            document.getElementById('inv-badge').textContent = STATE.inventory.length;
+            document.getElementById('win-item-name').textContent = `${prizeInfo.name} (+${prizeInfo.points} 分)`;
+
+            const winOverlay = document.getElementById('win-overlay');
+            winOverlay.classList.remove('opacity-0', 'pointer-events-none');
+            winOverlay.classList.add('opacity-100');
+
+            showToast(`恭喜抓獲【${prizeInfo.name}】！`, '🎁');
+            afterWin(prizeInfo);
+        }
+
+        function resetToIdle() {
+            STATE.clawStatus = 'IDLE';
+            STATE.turnTime = STATE.turnLimit;
+
+        }
+
+        /* 投幣動作 */
+        function insertCoins(amount = 5) {
+            sfx.coin();
+            STATE.coins += amount;
+            saveGame();
+            const coinEl = document.getElementById('coin-count');
+            coinEl.textContent = STATE.coins;
+            coinEl.classList.add('scale-125', 'text-emerald-300');
+            setTimeout(() => coinEl.classList.remove('scale-125', 'text-emerald-300'), 200);
+            showToast(`投幣成功！代幣 +${amount} 枚`, '🪙');
+        }
+
+        /* 啟動下爪流程 */
+        function triggerDropClaw() {
+            if (STATE.clawStatus !== 'IDLE') {
+                return;
+            }
+
+            if (STATE.coins <= 0) {
+                showToast('代幣用完了！', '🪙');
+                return;
+            }
+
+            STATE.coins--;
+            saveGame();
+            document.getElementById('coin-count').textContent = STATE.coins;
+            STATE.clawStatus = 'DESCENDING';
+            showToast('天車下爪夾取中... 祝好運！', '🎯');
+        }
+
+        /* ============================================================
+           7. 互動事件綁定與 UI 控制 (支援手機觸控與滑鼠點擊)
+           ============================================================ */
+        function setupUIControls() {
+            // 投幣按鈕 (下方大按鈕與上方 HUD 皆可投幣)
+            document.getElementById('btn-insert-coin').addEventListener('click', () => { if (!isBusy() && confirm('確定要重新開局嗎？進度會重設。')) restartGame(); });
+            document.getElementById('hud-coin-btn').addEventListener('click', () => showToast(`代幣有限！還要抓 ${STATE.goal - STATE.stageCaught} 隻過關`, '🎯'));
+
+            // 立即下爪按鈕
+            document.getElementById('btn-drop').addEventListener('click', () => {
+                triggerDropClaw();
+            });
+
+            // 視角切換
+            document.getElementById('btn-camera').addEventListener('click', () => {
+                cameraModeIndex = (cameraModeIndex + 1) % 3;
+                updateCameraPosition();
+                const modes = ['45°經典視角', '正面平視視角', '天車俯視對位'];
+                showToast(`已切換至：${modes[cameraModeIndex]}`, '🎥');
+            });
+
+            // 重新補貨
+            document.getElementById('btn-reset-prizes').addEventListener('click', () => {
+                if (isBusy()) { showToast('爪子運作中，請稍候', '⏳'); return; }
+                                if (STATE.coins < 3) { showToast('補貨需要 2 枚代幣', '🪙'); return; }
+                STATE.coins -= 2; refreshHUD(); saveGame();
+                spawnPrizes();
+                showToast('櫥窗已重新補滿娃娃！', '🔄');
+            });
+
+            // 獲獎彈窗繼續按鈕
+            document.getElementById('btn-win-continue').addEventListener('click', () => {
+                const winOverlay = document.getElementById('win-overlay');
+                winOverlay.classList.remove('opacity-100');
+                winOverlay.classList.add('opacity-0', 'pointer-events-none');
+            });
+
+            // 背包彈窗開關
+            const modal = document.getElementById('inventory-modal');
+            const openInv = () => {
+                renderInventoryList();
+                modal.classList.remove('opacity-0', 'pointer-events-none');
+                modal.classList.add('opacity-100');
+            };
+            const closeInv = () => {
+                modal.classList.remove('opacity-100');
+                modal.classList.add('opacity-0', 'pointer-events-none');
+            };
+            document.getElementById('btn-inventory').addEventListener('click', openInv);
+            document.getElementById('btn-close-inventory').addEventListener('click', closeInv);
+            document.getElementById('btn-close-inventory-2').addEventListener('click', closeInv);
+
+            // 十字方向鍵綁定 (使用 Pointer Events 完美相容手機與電腦)
+            bindDirectionButton('dpad-up', 'up');
+            bindDirectionButton('dpad-down', 'down');
+            bindDirectionButton('dpad-left', 'left');
+            bindDirectionButton('dpad-right', 'right');
+
+            // 鍵盤操作監聽
+            window.addEventListener('keydown', (e) => {
+                if (overlayOpen()) {
+                    if (['Enter', ' ', 'Escape'].includes(e.key)) { e.preventDefault(); closeOverlays(); }
+                    return;
+                }
+                if (e.key.startsWith('Arrow')) e.preventDefault();
+                if (STATE.currentMode === 'free') {
+                    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') STATE.keys.up = true;
+                    if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') STATE.keys.down = true;
+                    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') STATE.keys.left = true;
+                    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') STATE.keys.right = true;
+                    if (e.key === ' ' || e.key === 'Enter') {
+                        e.preventDefault();
+                        triggerDropClaw();
+                    }
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') STATE.keys.up = false;
+                if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') STATE.keys.down = false;
+                if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') STATE.keys.left = false;
+                if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') STATE.keys.right = false;
+            });
+
+            window.addEventListener('blur', () => { for (const k in STATE.keys) STATE.keys[k] = false; });
+            document.getElementById('btn-mute').addEventListener('click', (e) => {
+                sfx.muted = !sfx.muted;
+                e.currentTarget.textContent = sfx.muted ? '🔇' : '🔊';
+            });
+        }
+
+        function bindDirectionButton(elementId, dirKey) {
+            const el = document.getElementById(elementId);
+            const press = (e) => {
+                e.preventDefault();
+                STATE.keys[dirKey] = true;
+                el.classList.add('bg-indigo-600');
+            };
+            const release = () => {
+                STATE.keys[dirKey] = false;
+                el.classList.remove('bg-indigo-600');
+            };
+
+            el.addEventListener('pointerdown', press);
+            el.addEventListener('pointerup', release);
+            el.addEventListener('pointerleave', release);
+            el.addEventListener('pointercancel', release);
+        }
+
+        /* 渲染背包列表 */
+        function prizeValue(p) { return Math.max(1, Math.floor(p.points / 70)); }
+        function hexColor(c) { return '#' + c.toString(16).padStart(6, '0'); }
+        function renderInventoryList() {
+            const list = document.getElementById('inventory-list');
+            const found = PRIZE_TYPES.filter(t => STATE.dex[t.name]).length;
+            const dex = PRIZE_TYPES.map(t => {
+                const got = STATE.dex[t.name];
+                return `<div class="rounded-lg px-1 py-1.5 text-center text-[10px] font-bold border ${got ? '' : 'opacity-40'}" style="border-color:${hexColor(t.color)}88;color:${got ? hexColor(t.color) : '#94a3b8'}">${got ? '🎁' : '❓'}<br>${got ? t.name : '???'}</div>`;
+            }).join('');
+            const groups = {};
+            STATE.inventory.forEach(i => { (groups[i.name] = groups[i.name] || { item: i, n: 0 }).n++; });
+            const total = STATE.inventory.reduce((n, i) => n + prizeValue(i), 0);
+            const rows = Object.values(groups).map(({ item, n }) => `
+                <div class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-2.5 flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                        <h4 class="font-bold text-sm text-slate-100 truncate">${item.name} <span class="text-slate-400">x${n}</span></h4>
+                        <span class="text-[11px] text-amber-400">${item.points} 分／可換 ${prizeValue(item)} 🪙</span>
+                    </div>
+                    <button data-sell="${item.name}" class="shrink-0 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-lg cursor-pointer">兌換 1 個</button>
+                </div>`).join('');
+            list.innerHTML = `<div class="flex justify-between text-[11px] text-slate-300 font-bold mb-1"><span>圖鑑 ${found}/${PRIZE_TYPES.length}</span><span>目前代幣 ${STATE.coins} 🪙</span></div>
+                <div class="grid grid-cols-4 gap-1.5 mb-3">${dex}</div>` +
+                (rows ? rows + `<button data-sell-all class="w-full mt-1 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-black rounded-xl cursor-pointer">全部兌換 +${total} 🪙</button>`
+                      : '<div class="text-center py-6 text-slate-500 text-sm">背包空空的，抓到的娃娃會出現在這裡，可以兌換代幣！</div>');
+        }
+
+        /* 廣播 Toast 訊息通知 (不再依賴外部圖示替換，確保零報錯) */
+        let toastTimeout;
+        function showToast(text, emojiIcon = '💡') {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toast-msg');
+            const toastIcon = document.getElementById('toast-icon');
+
+            if (toastMsg) toastMsg.textContent = text;
+            if (toastIcon) toastIcon.textContent = emojiIcon;
+
+            toast.classList.remove('-translate-y-12', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                toast.classList.add('-translate-y-12', 'opacity-0');
+                toast.classList.remove('translate-y-0', 'opacity-100');
+            }, 2500);
+        }
+
+        function onWindowResize() {
+            if (!container.clientWidth || !container.clientHeight) return;
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        function setupOrbitInteraction() {
+            let isDragging = false;
+            let prevX = 0;
+            let targetAngleY = 0;
+
+            container.addEventListener('pointerdown', (e) => {
+                isDragging = true;
+                prevX = e.clientX;
+            });
+
+            window.addEventListener('pointerup', () => {
+                isDragging = false;
+            });
+
+            container.addEventListener('pointermove', (e) => {
+                if (!isDragging) return;
+                const deltaX = e.clientX - prevX;
+                prevX = e.clientX;
+                targetAngleY += deltaX * 0.005;
+                targetAngleY = Math.max(-0.6, Math.min(0.6, targetAngleY));
+            });
+
+            window.applyOrbitDamping = () => {
+                scene.rotation.y += (targetAngleY - scene.rotation.y) * 0.1;
+            };
+        }
+
+        /* ============================================================
+           8. 主遊戲與物理模擬循環
+           ============================================================ */
+        let lastTime = performance.now();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const now = performance.now();
+            let dt = (now - lastTime) / 1000;
+            if (dt > 0.1) dt = 0.1;
+            lastTime = now;
+
+            world.step(1 / 60, dt, 3);
+            updateClawLogic(dt);
+
+            prizes.forEach(p => {
+                p.mesh.position.copy(p.body.position);
+                p.mesh.quaternion.copy(p.body.quaternion);
+            });
+
+            updateTurnTimer(dt);
+            if (STATE.needNewStage && !isBusy()) { STATE.needNewStage = false; spawnPrizes(); }
+            if (!STATE.gameOver && STATE.coins <= 0 && STATE.clawStatus === 'IDLE' && !overlayOpen()) {
+                STATE.deadT += dt;
+                if (STATE.deadT > 2.5) {
+                    if (STATE.inventory.length) {
+                        STATE.deadT = 0;
+                        document.getElementById('btn-inventory').click();
+                        showToast('代幣用完了！兌換戰利品可以繼續', '🎒');
+                    } else gameOver();
+                }
+            } else STATE.deadT = 0;
+
+            if (prizes.length < 4 && !isBusy() && !overlayOpen()) {
+                spawnPrizes();
+                showToast('櫥窗景品不多了，已自動補貨！', '🔄');
+            }
+
+            if (window.applyOrbitDamping) window.applyOrbitDamping();
+            renderer.render(scene, camera);
+        }
+
+        window.onload = function() {
+            loadGame();
+            setGoal();
+            STATE.stageCaught = Math.min(STATE.savedCaught, STATE.goal - 1);
+            refreshHUD();
+            initGraphicsAndPhysics();
+            setupUIControls();
+            document.getElementById('btn-win-continue').addEventListener('click', () => { if (STATE.gameOver) restartGame(); });
+            document.getElementById('inventory-list').addEventListener('click', (e) => {
+                const b = e.target.closest('button');
+                if (!b) return;
+                let gain = 0;
+                if (b.hasAttribute('data-sell-all')) {
+                    STATE.inventory.forEach(i => { gain += prizeValue(i); });
+                    STATE.inventory = [];
+                } else {
+                    const idx = STATE.inventory.findIndex(i => i.name === b.dataset.sell);
+                    if (idx < 0) return;
+                    gain = prizeValue(STATE.inventory[idx]);
+                    STATE.inventory.splice(idx, 1);
+                }
+                STATE.coins += gain;
+                sfx.coin();
+                refreshHUD(); saveGame(); renderInventoryList();
+            });
+            updateStageUI(); updatePityUI();
+            animate();
+            showToast(`第${STATE.level}關：限時內抓 ${STATE.goal} 隻過關！代幣有限、娃娃會滑`, '🎯');
+        };
+    </script>
+</body>
+</html>
